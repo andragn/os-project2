@@ -1,5 +1,6 @@
 import argparse
 import threading
+import time
 
 NUM_TELLERS = 3
 NUM_CUSTOMERS = 50
@@ -10,6 +11,13 @@ class BankSimulation:
         self.num_customers = num_customers
         self.print_lock = threading.Lock()
 
+        self.bank_open = threading.Event()
+        self.ready_count = 0
+        self.ready_lock = threading.Lock()
+
+        self.teller_threads = []
+        self.customer_threads = []
+
     def log(self, actor_type, actor_id, partner_type, partner_id, msg):
         if partner_type is None or partner_id is None:
             partner = "[]"
@@ -19,9 +27,36 @@ class BankSimulation:
         with self.print_lock:
             print(f"{actor_type} {actor_id} {partner}: {msg}", flush=True)
 
+    def teller(self, teller_id):
+        self.log("Teller", teller_id, None, None, "ready to serve")
+
+        with self.ready_lock:
+            self.ready_count += 1
+            if self.ready_count == NUM_TELLERS:
+                self.bank_open.set()
+
+        self.log("Teller", teller_id, None, None, "waiting for a customer")
+
+    def customer(self, customer_id):
+        self.bank_open.wait()
+        self.log("Customer", customer_id, None, None, "going to bank.")
+
     def run(self):
-        self.log("Teller", 0, None, None, "ready to serve")
-        self.log("Customer", 0, None, None, "going to bank.")
+        for teller_id in range(NUM_TELLERS):
+            t = threading.Thread(target=self.teller, args=(teller_id,))
+            self.teller_threads.append(t)
+            t.start()
+
+        for customer_id in range(self.num_customers):
+            t = threading.Thread(target=self.customer, args=(customer_id,))
+            self.customer_threads.append(t)
+            t.start()
+
+        for t in self.teller_threads:
+            t.join()
+
+        for t in self.customer_threads:
+            t.join()
 
 
 def main():
