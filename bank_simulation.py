@@ -1,9 +1,20 @@
 import argparse
+import queue
 import threading
-import time
+from dataclasses import dataclass, field
+from typing import Optional
 
 NUM_TELLERS = 3
 NUM_CUSTOMERS = 50
+
+
+@dataclass
+class CustomerState:
+    customer_id: int
+    transaction: str
+    assigned_teller: Optional[int] = None
+    called_by_teller: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(0))
+    introduced_self: threading.Semaphore = field(default_factory=lambda: threading.Semaphore(0))
 
 
 class BankSimulation:
@@ -15,6 +26,7 @@ class BankSimulation:
         self.ready_count = 0
         self.ready_lock = threading.Lock()
 
+        self.customer_line = queue.Queue()
         self.teller_threads = []
         self.customer_threads = []
 
@@ -36,10 +48,31 @@ class BankSimulation:
                 self.bank_open.set()
 
         self.log("Teller", teller_id, None, None, "waiting for a customer")
+        customer = self.customer_line.get()
+
+        customer.assigned_teller = teller_id
+        customer.called_by_teller.release()
+
+        customer.introduced_self.acquire()
+        self.log("Teller", teller_id, "Customer", customer.customer_id, "serving a customer")
 
     def customer(self, customer_id):
         self.bank_open.wait()
+
+        state = CustomerState(customer_id=customer_id, transaction="deposit")
+
         self.log("Customer", customer_id, None, None, "going to bank.")
+        self.log("Customer", customer_id, None, None, "getting in line.")
+
+        self.customer_line.put(state)
+
+        state.called_by_teller.acquire()
+        teller_id = state.assigned_teller
+
+        self.log("Customer", customer_id, None, None, "selecting a teller.")
+        self.log("Customer", customer_id, "Teller", teller_id, "selects teller")
+        self.log("Customer", customer_id, "Teller", teller_id, "introduces itself")
+        state.introduced_self.release()
 
     def run(self):
         for teller_id in range(NUM_TELLERS):
@@ -52,10 +85,10 @@ class BankSimulation:
             self.customer_threads.append(t)
             t.start()
 
-        for t in self.teller_threads:
+        for t in self.customer_threads:
             t.join()
 
-        for t in self.customer_threads:
+        for t in self.teller_threads:
             t.join()
 
 
